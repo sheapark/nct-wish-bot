@@ -39,6 +39,11 @@ function RankBadge({ rank, delta }: { rank: number | null; delta: number | null 
   );
 }
 
+// UTC → KST 변환 헬퍼
+function toKST(dateStr: string): Date {
+  return new Date(new Date(dateStr).getTime() + 9 * 3600_000);
+}
+
 export default function DashboardPage() {
   const { data: ranks, loading: rl } = useRanks(336);
   const { data: logs, loading: ll } = useLogs();
@@ -56,27 +61,35 @@ export default function DashboardPage() {
     return Math.round((logs.filter((l) => l.success).length / logs.length) * 100);
   }, [logs]);
 
+  // 차트 데이터 — KST 기준
   const chartData = useMemo(() => {
     const last24 = ranks.filter(
       (r) => new Date(r.checked_at).getTime() > Date.now() - 24 * 3600_000,
     );
     const grouped: Record<string, Record<string, number | string | null>> = {};
     for (const row of last24) {
-      const key = row.checked_at.slice(0, 13);
+      const kst = toKST(row.checked_at);
+      const key = kst.toISOString().slice(0, 13); // "2026-04-11T19"
       if (!grouped[key]) grouped[key] = { time: key };
       grouped[key][row.site] = row.rank;
     }
     return Object.values(grouped).sort((a, b) => (String(a.time) < String(b.time) ? -1 : 1));
   }, [ranks]);
 
+  // 조회수 차트 — KST 기준
   const viewsChart = useMemo(() => {
     return logs
       .slice(0, 48)
       .reverse()
-      .map((l) => ({
-        time: l.posted_at.slice(11, 16),
-        views: l.youtube_views,
-      }));
+      .map((l) => {
+        const kst = toKST(l.posted_at);
+        const hh = String(kst.getUTCHours()).padStart(2, "0");
+        const mm = String(kst.getUTCMinutes()).padStart(2, "0");
+        return {
+          time: `${hh}:${mm}`,
+          views: l.youtube_views,
+        };
+      });
   }, [logs]);
 
   if (rl || ll)
@@ -129,7 +142,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Current ranks */}
+      {/* 현재 순위 */}
       <section className="card">
         <h2 className="card-title">🏆 현재 순위</h2>
         <div className="rank-grid">
@@ -146,9 +159,9 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Rank chart */}
+      {/* 순위 추이 차트 */}
       <section className="card">
-        <h2 className="card-title">📈 순위 추이 (최근 24시간)</h2>
+        <h2 className="card-title">📈 순위 추이 (최근 24시간 · KST)</h2>
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
@@ -160,7 +173,7 @@ export default function DashboardPage() {
                   fontFamily: "Nunito",
                   fontWeight: 600,
                 }}
-                tickFormatter={(v) => String(v).slice(11, 16)}
+                tickFormatter={(v) => `${String(v).slice(11, 13)}시`}
                 interval="preserveStartEnd"
               />
               <YAxis
@@ -183,7 +196,9 @@ export default function DashboardPage() {
                   fontWeight: 700,
                   boxShadow: "0 4px 20px rgba(180,130,210,0.15)",
                 }}
-                labelFormatter={(v) => `🕐 ${String(v).slice(0, 10)} ${String(v).slice(11)}시`}
+                labelFormatter={(v) =>
+                  `🕐 ${String(v).slice(0, 10)} ${String(v).slice(11, 13)}시 (KST)`
+                }
               />
               <Legend
                 wrapperStyle={{
@@ -210,9 +225,9 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* YouTube views chart */}
+      {/* 유튜브 조회수 차트 */}
       <section className="card">
-        <h2 className="card-title">🎬 유튜브 조회수 추이 (최근 48시간)</h2>
+        <h2 className="card-title">🎬 유튜브 조회수 추이 (최근 48시간 · KST)</h2>
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={viewsChart} margin={{ top: 4, right: 8, bottom: 4, left: 10 }}>
