@@ -4,7 +4,7 @@ import { useConfig } from "../hooks/useData";
 const RENDER_WEBHOOK = import.meta.env.VITE_RENDER_WEBHOOK_URL || "";
 
 export default function SettingsPage() {
-  const { data: config, loading, update } = useConfig();
+  const { data: config, loading, updateBulk } = useConfig();
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -17,9 +17,10 @@ export default function SettingsPage() {
     setForm(map);
   }, [config]);
 
+  // ── 전체 한 번에 저장 ──────────────────────────
   async function handleSave() {
     setSaving(true);
-    for (const [key, value] of Object.entries(form)) await update(key, value);
+    await updateBulk(form); // DB 요청 1번으로 끝!
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -106,7 +107,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* 가이섬 쿠키 갱신 */}
+      {/* 가이섬 쿠키 */}
       <section className="card">
         <h2 className="card-title">🍪 가이섬 쿠키 갱신</h2>
         <p className="card-desc" style={{ marginBottom: 16 }}>
@@ -114,7 +115,6 @@ export default function SettingsPage() {
           갱신해주세요!
         </p>
 
-        {/* 쿠키 가져오는 방법 안내 */}
         <div
           style={{
             background: "var(--yellow-soft)",
@@ -170,7 +170,6 @@ export default function SettingsPage() {
           />
         </label>
 
-        {/* 현재 상태 배지 */}
         <div
           style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
         >

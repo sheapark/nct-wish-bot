@@ -6,4 +6,5 @@ playwright
 beautifulsoup4
 lxml
 pytz
+tweepy
 supabase

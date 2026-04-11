@@ -3,12 +3,12 @@ import {
   fetchRecentRanks,
   fetchRecentLogs,
   fetchConfig,
-  upsertConfig,
+  upsertConfigBulk,
 } from "../lib/supabase";
 import type { TweetLog, RankHistory, BotConfig } from "../types";
 
 export function useRanks(hours = 336) {
-  const [data, setData] = useState<RankHistory[]>([]);
+  const [data, setData]       = useState<RankHistory[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -27,7 +27,7 @@ export function useRanks(hours = 336) {
 }
 
 export function useLogs() {
-  const [data, setData] = useState<TweetLog[]>([]);
+  const [data, setData]       = useState<TweetLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -46,7 +46,7 @@ export function useLogs() {
 }
 
 export function useConfig() {
-  const [data, setData] = useState<BotConfig[]>([]);
+  const [data, setData]       = useState<BotConfig[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -55,9 +55,10 @@ export function useConfig() {
     setLoading(false);
   }, []);
 
-  const update = useCallback(
-    async (key: string, value: string) => {
-      await upsertConfig(key, value);
+  // 전체 form을 한 번에 저장 (기존처럼 하나씩 X)
+  const updateBulk = useCallback(
+    async (configs: Record<string, string>) => {
+      await upsertConfigBulk(configs);
       await load();
     },
     [load]
@@ -67,5 +68,5 @@ export function useConfig() {
     load();
   }, [load]);
 
-  return { data, loading, update };
+  return { data, loading, updateBulk };
 }
