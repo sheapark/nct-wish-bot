@@ -9,7 +9,10 @@ from bs4 import BeautifulSoup
 from supabase import create_client
 import tweepy
 
-# ===================== 기본 설정 =====================
+
+# ═══════════════════════════════════════════════
+#  환경변수 로드
+# ═══════════════════════════════════════════════
 load_dotenv()
 
 API_KEY             = os.environ["API_KEY"]
@@ -24,7 +27,7 @@ sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 YOUTUBE_API_KEY = os.environ["YOUTUBE_API_KEY"]
 YT_VIDEO_ID     = os.environ["YT_VIDEO_ID"]
 
-# .env 기본값 (Supabase bot_config로 덮어씌워짐)
+# Supabase bot_config가 없을 때 사용하는 기본값
 _DEFAULT_TITLE  = os.environ.get("TARGET_TITLE",  "COLOR").strip()
 _DEFAULT_ARTIST = os.environ.get("TARGET_ARTIST", "NCT WISH").strip()
 
@@ -40,8 +43,13 @@ SITES = [
     ("바이브",      "vibe_top300"),
 ]
 
-# ===================== Supabase =====================
+
+# ═══════════════════════════════════════════════
+#  Supabase — 설정 / 상태 / 저장
+# ═══════════════════════════════════════════════
+
 def load_config() -> dict:
+    """bot_config 테이블에서 설정값 읽기. 실패 시 .env 기본값 사용."""
     try:
         rows = sb.table("bot_config").select("*").execute().data or []
         return {r["key"]: r["value"] for r in rows}
@@ -49,7 +57,9 @@ def load_config() -> dict:
         print("⚠️ load_config 실패, .env 기본값 사용:", e)
         return {}
 
+
 def load_state() -> dict:
+    """rank_history에서 site별 가장 최근 순위를 읽어 이전값으로 사용."""
     try:
         rows = (
             sb.table("rank_history")
@@ -68,7 +78,9 @@ def load_state() -> dict:
         print("⚠️ load_state 실패:", e)
         return {}
 
+
 def save_to_supabase(now, ranks, site_changes, views, tweet_text, success, error_msg=None):
+    """rank_history + tweet_logs 동시 저장."""
     now_iso = now.isoformat()
     try:
         rank_rows = [
@@ -92,8 +104,13 @@ def save_to_supabase(now, ranks, site_changes, views, tweet_text, success, error
     except Exception as e:
         print("❌ Supabase 저장 실패:", e)
 
-# ===================== 유틸 =====================
+
+# ═══════════════════════════════════════════════
+#  유틸
+# ═══════════════════════════════════════════════
+
 def normalize(s: str) -> str:
+    """곡명/아티스트 비교를 위한 정규화."""
     s = s.lower()
     s = re.sub(r"\(feat\.?.*?\)|\(prod\.?.*?\)", "", s)
     s = re.sub(r"feat\.?|featuring|prod\.?", "", s)
@@ -101,21 +118,28 @@ def normalize(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
+
 def is_match(title, artist, target_title, target_artist) -> bool:
+    """크롤링된 곡/아티스트가 타깃과 일치하는지 확인."""
     t1, a1 = normalize(title), normalize(artist)
     t2, a2 = normalize(target_title), normalize(target_artist)
     if t2 in t1 or t1 in t2:
         return len(set(a1.split()) & set(a2.split())) > 0
     return False
 
+
 def delta_text(prev, curr) -> str:
-    if prev is None or curr is None: return ""
+    """이전 순위와 현재 순위를 비교해 등락 텍스트 반환.
+    이전값이 없으면 (-) 표시."""
+    if prev is None or curr is None: return " (-)"
     if curr < prev: return f" (🔺{prev - curr})"
     if curr > prev: return f" (🔻{curr - prev})"
     return " (-)"
 
+
 def format_views(n) -> str:
     return "❌" if n is None else f"{n:,}"
+
 
 def as_int(x):
     if isinstance(x, (list, tuple)):
@@ -124,8 +148,13 @@ def as_int(x):
     try: return int(x) if x is not None else None
     except: return None
 
-# ===================== Twitter =====================
+
+# ═══════════════════════════════════════════════
+#  Twitter
+# ═══════════════════════════════════════════════
+
 def tweet(text: str) -> tuple:
+    """트윗 발행. (status_code, error_msg) 반환."""
     try:
         client = tweepy.Client(
             consumer_key=API_KEY,
@@ -141,14 +170,20 @@ def tweet(text: str) -> tuple:
         print("❌ Tweet 실패:", err)
         return -1, err
 
-# ===================== YouTube 조회수 =====================
-def fetch_youtube_views():
-    if not (YOUTUBE_API_KEY and YT_VIDEO_ID):
+
+# ═══════════════════════════════════════════════
+#  YouTube 조회수
+# ═══════════════════════════════════════════════
+
+def fetch_youtube_views(video_id: str = YT_VIDEO_ID):
+    """YouTube Data API로 조회수 가져오기.
+    video_id는 Supabase bot_config에서 읽은 값 사용."""
+    if not (YOUTUBE_API_KEY and video_id):
         return None
     try:
         r = requests.get(
             "https://www.googleapis.com/youtube/v3/videos",
-            params={"part": "statistics", "id": YT_VIDEO_ID, "key": YOUTUBE_API_KEY},
+            params={"part": "statistics", "id": video_id, "key": YOUTUBE_API_KEY},
             timeout=20,
         )
         r.raise_for_status()
@@ -158,7 +193,11 @@ def fetch_youtube_views():
         print("YouTube fetch error:", e)
         return None
 
-# ===================== 멜론 차트 =====================
+
+# ═══════════════════════════════════════════════
+#  차트 크롤링
+# ═══════════════════════════════════════════════
+
 def fetch_melon_chart(url, title, artist):
     try:
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
@@ -195,7 +234,7 @@ def fetch_melon_top100(title, artist):
 def fetch_melon_hot100(title, artist):
     return fetch_melon_chart("https://www.melon.com/chart/hot100/index.htm", title, artist)
 
-# ===================== 멜론 실시간 (가이섬) =====================
+
 def fetch_guyseom_rank(title, artist, when):
     try:
         url = f"https://xn--o39an51b2re.com/chart/melon/realtime/{when.strftime('%Y%m%d')}/{when.strftime('%H')}"
@@ -220,7 +259,7 @@ def fetch_guyseom_rank(title, artist, when):
     except Exception as e:
         print("guyseom fetch error:", e); return None, None, None
 
-# ===================== 지니 =====================
+
 def fetch_genie_rank(title, artist):
     try:
         for page in range(1, 5):
@@ -231,7 +270,7 @@ def fetch_genie_rank(title, artist):
             for row in soup.select("tr.list"):
                 num_td = row.select_one("td.number")
                 if not num_td: continue
-                raw = num_td.find(text=True, recursive=False)
+                raw = num_td.find(string=True, recursive=False)
                 rank = int(raw.strip()) if raw and raw.strip().isdigit() else None
                 sign, abs_ = 0, 0
                 if row.select_one("span.rank-up"):
@@ -249,7 +288,7 @@ def fetch_genie_rank(title, artist):
     except Exception as e:
         print("genie error:", e); return None, None, None
 
-# ===================== 벅스 =====================
+
 def fetch_bugs_rank(title, artist):
     try:
         r = requests.get(
@@ -280,7 +319,7 @@ def fetch_bugs_rank(title, artist):
     except Exception as e:
         print("bugs error:", e); return None, None, None
 
-# ===================== FLO =====================
+
 def fetch_flo_rank(title, artist):
     try:
         r = requests.get(
@@ -298,7 +337,7 @@ def fetch_flo_rank(title, artist):
     except Exception as e:
         print("flo error:", e); return None, None, None
 
-# ===================== VIBE TOP300 =====================
+
 def fetch_vibe_top300(title, artist):
     try:
         session = requests.Session()
@@ -331,27 +370,34 @@ def fetch_vibe_top300(title, artist):
     except Exception as e:
         print("vibe top300 error:", e); return None, None, None
 
-# ===================== 본문 생성 =====================
+
+# ═══════════════════════════════════════════════
+#  트윗 본문 생성
+# ═══════════════════════════════════════════════
+
 def build_text(now_kst, ranks, views, prev_state, site_changes=None) -> str:
+    """순위 + 조회수로 트윗 본문 생성.
+    등락은 DB에 저장된 이전 시간 값과 직접 비교해서 계산."""
     site_changes = site_changes or {}
 
     def sd(signed):
-        if signed is None: return ""
+        if signed is None: return " (-)"
         if signed > 0: return f" (🔺{signed})"
         if signed < 0: return f" (🔻{abs(signed)})"
         return " (-)"
 
     lines = [f"Ode to Love  | {now_kst.strftime('%Y-%m-%d %H:00')}", ""]
     prev_ranks = prev_state.get("ranks", {})
+
     for label, key in SITES:
         curr = as_int(ranks.get(key))
         prev = as_int(prev_ranks.get(key))
         if curr is None:
             lines.append(f"•{label} ❌")
-        elif key in site_changes:
-            lines.append(f"•{label} {curr}{sd(site_changes.get(key))}")
         else:
+            # 항상 DB 이전값과 비교해서 등락 계산
             lines.append(f"•{label} {curr}{delta_text(prev, curr)}")
+
     lines += [
         "",
         f"🎬 {format_views(views)}",
@@ -362,45 +408,48 @@ def build_text(now_kst, ranks, views, prev_state, site_changes=None) -> str:
     ]
     return "\n".join(lines)
 
-# ===================== 메인 실행 =====================
+
+# ═══════════════════════════════════════════════
+#  메인 실행
+# ═══════════════════════════════════════════════
+
 def run_once():
     now = datetime.now(KST)
     print(f"[DEBUG] 실행 시각: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-    # Supabase에서 설정 로드
+    # 1. Supabase에서 설정 로드
     cfg = load_config()
 
-    # 봇 일시정지 체크
+    # 2. 봇 일시정지 체크
     if cfg.get("paused") == "true":
         print("⏸️  봇 일시정지 중 (어드민에서 해제 가능)")
         return
 
-    # 설정값: Supabase 우선 → .env fallback
+    # 3. 설정값 (Supabase 우선 → .env fallback)
     title  = cfg.get("target_title",  _DEFAULT_TITLE).strip()
     artist = cfg.get("target_artist", _DEFAULT_ARTIST).strip()
+    yt_id  = cfg.get("yt_video_id",   YT_VIDEO_ID).strip()
     print(f"🎵 타깃: {title} / {artist}")
+    print(f"🎬 YouTube ID: {yt_id}")
 
-    # 이전 순위 로드
+    # 4. 이전 순위 로드 (등락 계산용)
     state = load_state()
     ranks, site_changes = {}, {}
-
     now = datetime.now(KST)
 
-    # 멜론 TOP100
+    # 5. 차트 크롤링
     try:
         rank, change = fetch_melon_top100(title, artist)
         ranks["melon_top100"] = rank
         if change is not None: site_changes["melon_top100"] = change
     except: ranks["melon_top100"] = None
 
-    # 멜론 HOT100
     try:
         rank, change = fetch_melon_hot100(title, artist)
         ranks["melon_hot100"] = rank
         if change is not None: site_changes["melon_hot100"] = change
     except: ranks["melon_hot100"] = None
 
-    # 가이섬 (쿠키 불필요)
     try:
         rank, sign, abs_ = fetch_guyseom_rank(title, artist, now)
         ranks["guyseom"] = rank
@@ -408,7 +457,6 @@ def run_once():
     except Exception as e:
         print("guyseom error:", e); ranks["guyseom"] = None
 
-    # 지니
     try:
         rank, sign, abs_ = fetch_genie_rank(title, artist)
         ranks["genie"] = rank
@@ -416,7 +464,6 @@ def run_once():
     except Exception as e:
         print("genie error:", e); ranks["genie"] = None
 
-    # FLO
     try:
         rank, sign, abs_ = fetch_flo_rank(title, artist)
         ranks["flo"] = rank
@@ -424,7 +471,6 @@ def run_once():
     except Exception as e:
         print("flo error:", e); ranks["flo"] = None
 
-    # 벅스
     try:
         rank, sign, abs_ = fetch_bugs_rank(title, artist)
         ranks["bugs"] = rank
@@ -432,7 +478,6 @@ def run_once():
     except Exception as e:
         print("bugs error:", e); ranks["bugs"] = None
 
-    # VIBE TOP300
     try:
         rank, sign, abs_ = fetch_vibe_top300(title, artist)
         ranks["vibe_top300"] = rank
@@ -440,18 +485,22 @@ def run_once():
     except Exception as e:
         print("vibe top300 error:", e); ranks["vibe_top300"] = None
 
-    # 트윗 발행
-    views = fetch_youtube_views()
+    # 6. 트윗 발행
+    views = fetch_youtube_views(yt_id)
     text  = build_text(now, ranks, views, state, site_changes)
     print("----- Tweet body -----\n" + text + "\n----------------------")
 
     code, err_msg = tweet(text)
     success = 200 <= code < 300
 
-    # Supabase 저장
+    # 7. Supabase 저장
     save_to_supabase(now, ranks, site_changes, views, text, success, err_msg)
 
-# ===================== 스케줄러 =====================
+
+# ═══════════════════════════════════════════════
+#  스케줄러
+# ═══════════════════════════════════════════════
+
 def main():
     sched = BlockingScheduler(timezone="Asia/Seoul")
     sched.add_job(run_once, CronTrigger(minute=10, timezone="Asia/Seoul"))
@@ -461,9 +510,11 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         pass
 
+
 def lambda_handler(event=None, context=None):
     run_once()
     return {"statusCode": 200, "body": "Tweet posted"}
+
 
 if __name__ == "__main__":
     import sys
