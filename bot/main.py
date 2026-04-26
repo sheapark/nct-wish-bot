@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, re
+import os, re, time, json
 from datetime import datetime
 import pytz, requests
 from dotenv import load_dotenv
@@ -153,22 +153,145 @@ def as_int(x):
 #  Twitter
 # ═══════════════════════════════════════════════
 
-def tweet(text: str) -> tuple:
-    """트윗 발행. (status_code, error_msg) 반환."""
+TWEET_MAX_RETRY = int(os.environ.get("TWEET_MAX_RETRY", "1"))
+TWEET_RETRY_DELAY_SECONDS = int(os.environ.get("TWEET_RETRY_DELAY_SECONDS", "300"))
+
+
+def _safe_response_text(response) -> str:
+    """tweepy 예외 객체 안의 response body를 안전하게 문자열로 추출."""
+    if response is None:
+        return ""
+
+    text = getattr(response, "text", None)
+    if text:
+        return text
+
     try:
-        client = tweepy.Client(
-            consumer_key=API_KEY,
-            consumer_secret=API_KEY_SECRET,
-            access_token=ACCESS_TOKEN,
-            access_token_secret=ACCESS_TOKEN_SECRET,
-        )
-        response = client.create_tweet(text=text, reply_settings="mentionedUsers")
-        print("✅ Tweet 성공:", response.data)
-        return 200, None
-    except tweepy.TweepyException as e:
-        err = str(e)
-        print("❌ Tweet 실패:", err)
-        return -1, err
+        return json.dumps(response.json(), ensure_ascii=False)
+    except Exception:
+        return ""
+
+
+def _safe_response_headers(response) -> dict:
+    """Render 로그에 남길 만한 X API 응답 헤더만 추출."""
+    if response is None:
+        return {}
+
+    headers = dict(getattr(response, "headers", {}) or {})
+    useful_keys = [
+        "x-rate-limit-limit",
+        "x-rate-limit-remaining",
+        "x-rate-limit-reset",
+        "x-access-level",
+        "x-connection-hash",
+        "content-type",
+        "date",
+    ]
+    return {k: headers.get(k) for k in useful_keys if headers.get(k) is not None}
+
+
+def _build_tweepy_error_detail(e: Exception, attempt: int, text: str) -> dict:
+    """Supabase와 Render 로그에 남길 에러 상세 정보 구성."""
+    response = getattr(e, "response", None)
+    status_code = getattr(response, "status_code", None)
+
+    detail = {
+        "time": datetime.now(KST).isoformat(),
+        "attempt": attempt,
+        "exception_type": type(e).__name__,
+        "status_code": status_code,
+        "api_codes": getattr(e, "api_codes", None),
+        "api_messages": getattr(e, "api_messages", None),
+        "response_text": _safe_response_text(response),
+        "response_headers": _safe_response_headers(response),
+        "tweet_length": len(text),
+        "has_url": ("http://" in text or "https://" in text),
+        "tweet_preview": text[:200],
+        "raw_exception": repr(e),
+    }
+
+    # None 값은 로그 가독성을 위해 제거
+    return {k: v for k, v in detail.items() if v not in (None, "", [], {})}
+
+
+def _print_error_detail(prefix: str, detail: dict):
+    """Render Logs에서 바로 원인을 볼 수 있도록 JSON 형태로 출력."""
+    print(prefix, flush=True)
+    print(json.dumps(detail, ensure_ascii=False, indent=2), flush=True)
+
+
+def tweet(text: str) -> tuple:
+    """
+    트윗 발행.
+    - 성공: (200, None)
+    - 실패: (status_code 또는 -1, 상세 error_msg)
+    - 403 Forbidden은 최대 1회 재시도한다.
+    """
+    client = tweepy.Client(
+        consumer_key=API_KEY,
+        consumer_secret=API_KEY_SECRET,
+        access_token=ACCESS_TOKEN,
+        access_token_secret=ACCESS_TOKEN_SECRET,
+    )
+
+    last_status_code = -1
+    last_error_msg = None
+
+    for attempt in range(1, TWEET_MAX_RETRY + 2):
+        try:
+            print(f"🐦 Tweet 시도 {attempt}/{TWEET_MAX_RETRY + 1}", flush=True)
+            response = client.create_tweet(text=text, reply_settings="mentionedUsers")
+            print("✅ Tweet 성공:", response.data, flush=True)
+            return 200, None
+
+        except tweepy.Forbidden as e:
+            detail = _build_tweepy_error_detail(e, attempt, text)
+            last_status_code = detail.get("status_code") or 403
+            last_error_msg = json.dumps(detail, ensure_ascii=False)
+
+            _print_error_detail("❌ Tweet 실패 - 403 Forbidden 상세", detail)
+
+            if attempt <= TWEET_MAX_RETRY:
+                print(
+                    f"🔁 403 Forbidden 재시도 대기: {TWEET_RETRY_DELAY_SECONDS}초 뒤 1회 재시도",
+                    flush=True,
+                )
+                time.sleep(TWEET_RETRY_DELAY_SECONDS)
+                continue
+
+            print("🛑 403 Forbidden 재시도 후에도 실패. 이번 트윗은 스킵합니다.", flush=True)
+            return last_status_code, last_error_msg
+
+        except tweepy.TooManyRequests as e:
+            detail = _build_tweepy_error_detail(e, attempt, text)
+            detail["hint"] = "429 Rate Limit입니다. 403과 달리 호출 제한에 걸린 상황일 가능성이 큽니다."
+            last_status_code = detail.get("status_code") or 429
+            last_error_msg = json.dumps(detail, ensure_ascii=False)
+            _print_error_detail("❌ Tweet 실패 - 429 Too Many Requests 상세", detail)
+            return last_status_code, last_error_msg
+
+        except tweepy.TweepyException as e:
+            detail = _build_tweepy_error_detail(e, attempt, text)
+            last_status_code = detail.get("status_code") or -1
+            last_error_msg = json.dumps(detail, ensure_ascii=False)
+            _print_error_detail("❌ Tweet 실패 - TweepyException 상세", detail)
+            return last_status_code, last_error_msg
+
+        except Exception as e:
+            detail = {
+                "time": datetime.now(KST).isoformat(),
+                "attempt": attempt,
+                "exception_type": type(e).__name__,
+                "tweet_length": len(text),
+                "has_url": ("http://" in text or "https://" in text),
+                "tweet_preview": text[:200],
+                "raw_exception": repr(e),
+            }
+            last_error_msg = json.dumps(detail, ensure_ascii=False)
+            _print_error_detail("❌ Tweet 실패 - Unexpected Error 상세", detail)
+            return -1, last_error_msg
+
+    return last_status_code, last_error_msg
 
 
 # ═══════════════════════════════════════════════
