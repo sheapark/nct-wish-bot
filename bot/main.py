@@ -509,7 +509,7 @@ def build_text(now_kst, ranks, views, prev_state, site_changes=None) -> str:
         if signed < 0: return f" (🔻{abs(signed)})"
         return " (-)"
 
-    lines = [f"Ode to Love  | {now_kst.strftime('%Y-%m-%d %H:00')}", ""]
+    lines = [f"I SPY  | {now_kst.strftime('%Y-%m-%d %H:00')}", ""]
     prev_ranks = prev_state.get("ranks", {})
 
     for label, key in SITES:
@@ -525,9 +525,9 @@ def build_text(now_kst, ranks, views, prev_state, site_changes=None) -> str:
         "",
         f"🎬 {format_views(views)}",
         "",
-        "#NCTWISH #OdetoLove",
-        "#다정함을전할게_오드투러브",
-        "#NCTWISH_DDUDDURUDUDAY",
+        "#NCTWISH #ISPY",
+        "#NCTWISH_ISPY",
+        "#ISPY_너란WISH가궁금해",
     ]
     return "\n".join(lines)
 
