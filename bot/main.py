@@ -28,7 +28,7 @@ YOUTUBE_API_KEY = os.environ["YOUTUBE_API_KEY"]
 YT_VIDEO_ID     = os.environ["YT_VIDEO_ID"]
 
 # Supabase bot_config가 없을 때 사용하는 기본값
-_DEFAULT_TITLE  = os.environ.get("TARGET_TITLE",  "COLOR").strip()
+_DEFAULT_TITLE  = os.environ.get("TARGET_TITLE",  "I SPY").strip()
 _DEFAULT_ARTIST = os.environ.get("TARGET_ARTIST", "NCT WISH").strip()
 
 KST = pytz.timezone("Asia/Seoul")
